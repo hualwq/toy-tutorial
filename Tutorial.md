@@ -619,3 +619,394 @@ mlir-examples/toy-tutorial/build/lowering-examples \
 最终的 LLVM dialect 可见 `llvm.getelementptr`、`llvm.load`、`llvm.fmul`、`llvm.store` 和
 `llvm.br`。它仍是 MLIR，不是文本 LLVM IR；如需导出文本 LLVM IR，还可接 `mlir-translate
 --mlir-to-llvmir`。
+
+
+## 第 10 步：读懂 Operation、Region、Block 与 ModuleOp
+
+不要把 operation 只理解为加、减、乘、除等一条计算指令。在 MLIR 中，operation 是
+任何具有独立语义的 IR 节点：`arith.addf` 是 operation，`func.func`、`scf.for`、
+`scf.if` 和 `builtin.module` 也都是 operation。小 operation 通常只计算一个结果；较大
+operation 则可拥有内部 IR。
+
+它们的包含关系是：
+
+```text
+Operation
+  └─ 0 个或多个 Region
+       └─ 1 个或多个 Block
+            ├─ 0 个或多个 block argument
+            └─ 按顺序排列的 Operation
+                 └─ ... 每个 Operation 又可拥有 Region
+```
+
+这里的“嵌套”是 **operation 的嵌套**，而不是“MLIR 等于嵌套 module”。`module` 只是
+一种常见的顶层 operation；复杂 operation 通常通过 region 容纳内部 IR，而不是通过
+嵌套 `ModuleOp`。
+
+### 10.1 ModuleOp 是一种顶层容器 Operation
+
+文本中的：
+
+```mlir
+module {
+  func.func @add(%x: f32, %y: f32) -> f32 {
+    %0 = arith.addf %x, %y : f32
+    return %0 : f32
+  }
+}
+```
+
+对应的 IR 树如下：
+
+```text
+builtin.module                         Operation，也称 ModuleOp
+└─ Region #0                            module 的内部程序
+   └─ Block #0                          顶层顺序执行的 operation 容器
+      └─ func.func @add                Operation：函数
+         └─ Region #0                  函数体
+            └─ Block #0                函数入口基本块
+               ├─ block arguments: %x: f32, %y: f32
+               ├─ arith.addf           Operation：加法
+               └─ func.return          Operation：返回
+```
+
+`ModuleOp` 是 C++ 中对 `builtin.module` operation 的包装类型。它通常代表一个编译单元，
+并拥有一个 region；本教程的 `OperationPass<ModuleOp>` 表示 pass 从这个 module operation
+开始处理其内部 IR。
+
+### 10.2 Region 不是代码开始位置，而是 operation 的内部程序
+
+Region 的抽象层级介于“拥有它的 operation”和“内部的 block”之间。它回答的是：
+**这个 operation 的 body 在哪里？** 函数体、循环体、条件分支的 then/else 部分，都是
+region 的典型例子。文本中的花括号 `{ ... }` 经常呈现一个 region，但 region 是 IR 的
+真实结构，而非单纯的语法标记。
+
+例如 `scf.if` 是一个 operation，它通常有两个 region：
+
+```mlir
+scf.if %cond {
+  "demo.then"() : () -> ()
+} else {
+  "demo.else"() : () -> ()
+}
+```
+
+```text
+scf.if Operation
+├─ then Region
+│  └─ Block
+│     └─ demo.then Operation
+└─ else Region
+   └─ Block
+      └─ demo.else Operation
+```
+
+相应地，`scf.for` 的循环体是一个 region，`func.func` 的函数体是一个 region，
+`builtin.module` 的内容也是一个 region。相反，本教程的 `toy.add` 和 `toy.multiply`
+使用 `ZeroRegions`，表示它们没有内部程序，是叶子计算 operation。
+
+### 10.3 Block 是 region 内的控制流和顺序执行单位
+
+Block 位于 region 内，包含一串按顺序执行的 operation，并可在开头声明 block argument。
+一个简单函数没有跳转，其 region 只有一个 block，因此通常看不见 block 标签：
+
+```mlir
+func.func @add(%x: f32, %y: f32) -> f32 {
+  %0 = arith.addf %x, %y : f32
+  return %0 : f32
+}
+```
+
+当一个 region 有显式控制流时，才更容易看到多个 block：
+
+```mlir
+func.func @choose(%cond: i1) {
+  cf.cond_br %cond, ^yes, ^no
+
+^yes:
+  "demo.yes"() : () -> ()
+  cf.br ^end
+
+^no:
+  "demo.no"() : () -> ()
+  cf.br ^end
+
+^end:
+  return
+}
+```
+
+`^yes`、`^no` 与 `^end` 是三个 block。`cf.cond_br` 和 `cf.br` 在 block 之间建立
+控制流边；每个 block 内的 operation 则自上而下执行。block argument 还可接收前驱 block
+传入的 SSA value，在控制流汇合点承担类似传统 SSA `phi` 的角色：
+
+```mlir
+^merge(%value: i32):
+  "demo.use"(%value) : (i32) -> ()
+```
+
+### 10.4 用职责而非名字记忆
+
+| 概念 | 回答的问题 | 典型实例 |
+| --- | --- | --- |
+| Operation | “这是什么语义单元？” | 加法、函数、循环、module |
+| Region | “这个 operation 的内部程序在哪里？” | 函数体、循环体、then/else body |
+| Block | “一条控制流路径上顺序执行什么？” | 函数入口块、`^yes` 分支块 |
+| ModuleOp | “顶层编译单元用什么 operation 表示？” | `module { ... }` |
+
+最简记忆法是：**operation 是节点，region 是节点拥有的内部代码空间，block 是该空间中的
+基本块，ModuleOp 是最常见的顶层 operation。**
+
+## 第 11 步：从 Toy 到 linalg — 结构化线性代数变换
+
+第 4 步提到将 `toy` 继续 lowering 到 `linalg`/`tensor`。linalg（**Lin**ear **Alg**ebra dialect）是 MLIR 中表达张量/矩阵运算的核心方言。它把 matmul、conv、element-wise 等计算表达为 **结构化 op**，让编译器在保持语义信息的前提下做变换，而不是手写循环。
+
+本步使用 `linalg/` 目录下的文件（而非 `mlir-opt` 构建产物），借助标准 `mlir-opt` 观察 linalg 的 pass pipeline。
+
+### 11.1 linalg 的核心思想
+
+对比两种表达矩阵乘法的方式。
+
+**方式 A：手写 scf.for（无结构化信息）**
+```mlir
+scf.for %i = %c0 to %cN {
+  scf.for %j = %c0 to %cM {
+    scf.for %k = %c0 to %cK {
+      %a = memref.load %A[%i, %k]
+      %b = memref.load %B[%k, %j]
+      // ...
+    }
+  }
+}
+```
+编译器只看到三层循环和 load/store，**不知道这是 matmul**，无法应用 matmul 专用优化（如分块策略）。
+
+**方式 B：linalg.matmul（结构化）**
+```mlir
+%result = linalg.matmul
+  ins(%A, %B : tensor<32x64xf32>, tensor<64x48xf32>)
+  outs(%out : tensor<32x48xf32>)
+```
+编译器知道这是 matmul，知道哪些维度是 parallel（i, j）、哪些是 reduction（k），也了解 A/B/C 的访问模式。**结构化信息保留给后续 pass 使用**。
+
+linalg 提供了两端之间的桥梁：用结构化 op 写计算，用 pass pipeline 做变换，最终 lower 到 scf/vector/llvm。
+
+详细语法见 `linalg/01_linalg_basics.mlir`，三种核心 op：
+
+| op | 用途 | 等价于 |
+|----|------|--------|
+| `linalg.generic` | 通用的结构化 op（用 region 描述计算） | TVM `te.compute` |
+| `linalg.matmul` | 矩阵乘法（命名 op） | TVM `te.matmul` |
+| `linalg.conv_2d_*` | 卷积（命名 op，含多种布局） | TVM `topi.nn.conv2d` |
+
+`linalg.generic` 是最灵活的形式，通过 `indexing_maps` 和 `iterator_types` 描述任意张量运算；命名 op 是特定运算的快捷方式。
+
+```sh
+# 验证所有 linalg 文件
+for f in mlir-examples/toy-tutorial/linalg/*.mlir; do
+  echo "=== $(basename $f) ==="
+  mlir-opt "$f" --verify-each 2>&1 | head -3
+done
+```
+
+### 11.2 Tiling：用 linalg-tile 做分块
+
+TVM 中 `s[C].tile(i, j, 64, 64)` 把循环拆成 outer+inner 层。linalg 中对等的工具是 `linalg-tile` pass：
+
+```sh
+mlir-opt linalg/02_linalg_tiling.mlir \
+  -pass-pipeline='builtin.module(linalg-tile{loop-type=scf sizes=64,64})'
+```
+
+**变换前**，一个 `linalg.matmul` 表达 128×256×192 的矩阵乘法：
+
+```mlir
+%C = linalg.matmul ins(%A, %B : tensor<128x256xf32>, tensor<256x192xf32>)
+                   outs(%out : tensor<128x192xf32>)
+```
+
+**变换后**，`linalg-tile{loop-type=scf sizes=64,64}` 产生：
+
+```text
+scf.for %io = 0 to 128 step 64 {
+  scf.for %jo = 0 to 192 step 64 {
+    %tile_A = tensor.extract_slice %A[%io, 0][64, 256][1, 1]
+    %tile_B = tensor.extract_slice %B[0, %jo][256, 64][1, 1]
+    %tile_C = tensor.extract_slice %out[%io, %jo][64, 64][1, 1]
+    linalg.matmul ins(%tile_A, %tile_B) outs(%tile_C)
+  }
+}
+```
+
+关键观察：**tile 后内层仍是 linalg.matmul**，而不是展开的 scf.for。这是 linalg 的设计原则——结构化 op 贯穿变换过程，只在最后阶段 lower 到循环。这也意味着 tile 之后还可以继续做 fusion、vectorization。
+
+`loop-type` 参数控制生成的循环形式：
+
+| loop-type | 生成 | 用途 |
+|-----------|------|------|
+| `scf`（默认） | `scf.for` | 通用循环 |
+| `affine` | `affine.for` | 可做依赖分析的循环 |
+| `parallel` | `scf.parallel` | 外层可并行（OpenMP / CUDA） |
+
+如果再加上 `linalg-lower-to-loops` 才能看到手写 4 层循环的等价结果。推荐先只跑 `linalg-tile` 观察 IR 变化，再逐步加后续 pass：
+
+```sh
+mlir-opt linalg/02_linalg_tiling.mlir \
+  -pass-pipeline='builtin.module(
+    linalg-tile{loop-type=scf sizes=64,64},
+    linalg-lower-to-loops{loop-type=scf}
+  )'
+```
+
+### 11.3 Fusion：用 linalg-fuse 融合操作
+
+常见优化模式是 ReLU + Matmul 融合，避免将 ReLU 的中间结果写入主存。TVM 中需要手动指定 `s[relu].compute_at(s[matmul], k)`；linalg 的 `linalg-fuse` pass 可**自动分析** producer-consumer 关系并做融合。
+
+```sh
+mlir-opt linalg/03_linalg_fusion.mlir \
+  -pass-pipeline='builtin.module(linalg-fuse{operation-fusion=on})' \
+  --mlir-print-ir-after-all 2>&1 | head -80
+```
+
+变换前的 IR 包含两个独立的 linalg op：
+
+```mlir
+// Producer: ReLU(A)
+%relu = linalg.generic { ... } ins(%A) outs(%A) { ... }
+// Consumer: Matmul(ReLU(A), B)
+%C = linalg.matmul ins(%relu, %B) outs(%out)
+```
+
+融合后的计算逻辑等价于：
+
+```text
+for i:
+  for j:
+    C[i][j] = 0
+    for k:
+      a_relu = max(A[i][k], 0)   ← ReLU 融合进 matmul 循环
+      C[i][j] += a_relu * B[k][j]
+```
+
+注意 `linalg-fuse` 能自动判断融合是否合法，它不是暴力地合并所有 op，而是遵循两个基本原则：
+1. **方向**：element-wise → reduction 可以融合（ReLU→Matmul）；反过来通常不行。
+2. **合法性**：融合后不能引入循环携带依赖。
+
+`03_linalg_fusion.mlir` 末尾还有一个 Conv + BatchNorm + ReLU 的例子，展示实际模型中的多 op 融合场景。这是更接近生产使用的模式。
+
+### 11.4 Vectorization：从 linalg 到 SIMD 向量
+
+向量化是 tiling 后的自然下一步：tile 出合适大小的内层循环后，用向量操作替代逐元素操作。
+
+```sh
+mlir-opt linalg/04_linalg_vectorization.mlir \
+  -pass-pipeline='builtin.module(
+    one-shot-bufferize,
+    linalg-tile{loop-type=scf sizes=8,8},
+    linalg-lower-to-loops{loop-type=scf}
+  )'
+```
+
+变换前后对比如下。
+
+**变换前（linalg.generic）**：
+```mlir
+linalg.generic {
+  indexing_maps = [affine_map<(d0, d1) -> (d0, d1)>,
+                   affine_map<(d0, d1) -> (d0, d1)>,
+                   affine_map<(d0, d1) -> (d0, d1)>],
+  iterator_types = ["parallel", "parallel"]
+} ins(%A, %B : tensor<128x128xf32>, tensor<128x128xf32>)
+  outs(%out : tensor<128x128xf32>) {
+  ^bb0(%a: f32, %b: f32, %c: f32):
+    %sum = arith.addf %a, %b : f32
+    linalg.yield %sum : f32
+}
+```
+
+**变换后（tile(8,8) + lower 到 vector）**：
+```mlir
+// tile(8,8) + lower 后，内层 ji 循环被向量化为：
+%vec_a = vector.transfer_read %A[%i, %j_base], %c1
+  {in_bounds = [true, true]} : memref<128x128xf32>, vector<8xf32>
+%vec_b = vector.transfer_read %B[%i, %j_base], %c1
+  {in_bounds = [true, true]} : memref<128x128xf32>, vector<8xf32>
+%vec_sum = arith.addf %vec_a, %vec_b : vector<8xf32>
+vector.transfer_write %vec_sum, %C[%i, %j_base], %c1
+  {in_bounds = [true, true]} : vector<8xf32>, memref<128x128xf32>
+```
+
+`vector.transfer_read` 替代了逐元素的 `memref.load`；`arith.addf` 在 `vector<8xf32>` 上一次操作 8 个 f32；`vector.transfer_write` 替代逐元素的 `memref.store`。后端可以将其映射为 AVX2（`vmovups` + `vaddps`）、ARM NEON 或 SVE。
+
+`in_bounds = [true, true]` 告诉后端没有越界访问，消除边界检查。这个属性来自 tiling 的静态分析：128 被 8 整除，内层循环不可能越界。
+
+### 11.5 完整 pipeline：tile → fuse → vectorize
+
+实际模型不会只用一个 pass，而是组合使用。典型的 linalg 优化 pipeline 是：
+
+```sh
+mlir-opt linalg/03_linalg_fusion.mlir \
+  -pass-pipeline='builtin.module(
+    one-shot-bufferize,               // tensor → memref
+    linalg-tile{loop-type=scf sizes=32,32},  // tiling
+    linalg-fuse{operation-fusion=on},         // fusion
+    linalg-lower-to-loops{loop-type=scf},     // linalg → scf
+    scf-for-loop-canonicalization
+  )'
+```
+
+对应的变换路径：
+
+```text
+linalg.generic / matmul（结构化 op，值语义）
+    ↓ one-shot-bufferize
+linalg.generic / matmul（结构化 op，内存语义）
+    ↓ linalg-tile
+tile 后的 linalg op
+    ↓ linalg-fuse
+融合后的 linalg op（如 ReLU 合并进 matmul）
+    ↓ linalg-lower-to-loops
+scf.for 循环（已失去结构化信息）
+    ↓ vectorize / convert-scf-to-cf / ...,lower-vector
+vector / LLVM dialect
+```
+
+这里的顺序不是随意定的：**tile 先于 fuse** 是因为把计算切小后再融合，能更精确地分析数据重用；**fuse 先于 lower-to-loops** 是因为结构化 op 上的融合更简单（编译器知道哪些是 parallel、哪些是 reduction），展开为 scf.for 后就丢失了这些信息。
+
+### 11.6 与 TVM schedule 的对照
+
+| TVM | MLIR (linalg) |
+|-----|--------------|
+| `te.compute` | `linalg.generic` 或命名 op（`linalg.matmul`） |
+| `s[C].tile(i, j, 64, 64)` | `linalg-tile{loop-type=scf sizes=64,64}` |
+| `s[relu].compute_at(s[matmul], k)` | `linalg-fuse` pass（自动分析） |
+| `s[C].vectorize(yi)` | `vectorize` → `vector.transfer_read/write` |
+| 用户手动构造 schedule | pass pipeline 声明式描述变换 |
+| schedule 在 C++ API 中 | pipeline 在命令行或 `PassManager` 中 |
+
+两者的设计哲学差异是：TVM 要求用户**显式调用 schedule 原语**（`tile`、`compute_at`、`vectorize`），变换立即作用于 IR；linalg 把变换封装为 **pass**，用户通过组合 pass pipeline 来驱动，结构化信息在整个变换链中保留更久，展开的时机更晚。
+
+### 11.7 与 Toy 的衔接
+
+回到本教程的主线——把 `toy` lowering 到 linalg 是自然延伸：
+
+```text
+toy.add / toy.multiply（自定义高层方言）
+    ↓ 自定义 conversion pass
+arith.addf / arith.mulf（可复用标量算术）
+    ↓ linalg-genericize / padding / ...
+linalg.generic / matmul（结构化线性代数）
+    ↓ tile / fuse / vectorize（本步学的内容）
+scf / memref / vector（循环和内存操作）
+    ↓ lowering
+LLVM dialect → LLVM IR → 机器码
+```
+
+文件的阅读顺序建议：
+
+1. `linalg/01_linalg_basics.mlir` — 理解 linalg 的基本语法
+2. `linalg/02_linalg_tiling.mlir` — tiling 自动变换
+3. `linalg/03_linalg_fusion.mlir` — fusion 自动变换
+4. `linalg/04_linalg_vectorization.mlir` — 向量化路径
+
+每个文件都是**自包含的**：变换前的 IR 可直接用 `mlir-opt` 验证，变换后的结果从命令输出中观察。建议用 `--mlir-print-ir-after-all` 观察 pass 的逐步变化。理解 linalg 后，再回头读官方 Toy 教程（`https://mlir.llvm.org/docs/Tutorials/Toy/`）的第 5-7 章，会有更完整的认识。
