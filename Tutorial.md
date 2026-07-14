@@ -9,17 +9,16 @@
 
 本项目是 C++/CMake 项目，不依赖 Python 虚拟环境；需要一个已构建的 LLVM/MLIR
 （本项目已验证 MLIR 16.0.6）。从本目录执行，设置 `MLIR_DIR` 和 `LLVM_DIR` 为本机
-MLIR 构建或安装目录中的 CMake 配置目录：
+MLIR 构建或安装目录中的 CMake 配置目录。以下以环境变量 `$MLIR_BUILD` 表示该目录：
 
 ```sh
 cmake -S . -B build \
-  -DMLIR_DIR=/home/wangsiyuan/llvm-mlir-install/lib/cmake/mlir \
-  -DLLVM_DIR=/home/wangsiyuan/llvm-mlir-install/lib/cmake/llvm
+  -DMLIR_DIR="$MLIR_BUILD/lib/cmake/mlir" \
+  -DLLVM_DIR="$MLIR_BUILD/lib/cmake/llvm"
 cmake --build build -j2
 ```
 
-若 MLIR 位于其他位置，将上述路径替换为
-`$MLIR_BUILD/lib/cmake/mlir` 和 `$MLIR_BUILD/lib/cmake/llvm`。构建成功后可先运行：
+构建成功后可先运行：
 
 ```sh
 ./build/toy-opt input/01_toy_high_level.mlir \
