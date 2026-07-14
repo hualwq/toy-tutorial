@@ -33,10 +33,14 @@ add_public_tablegen_target(OdsToyIncGen)
 add_executable(ods-toy-opt src/04_ods-toy-opt.cpp)
 add_dependencies(ods-toy-opt OdsToyIncGen)
 target_compile_features(ods-toy-opt PRIVATE cxx_std_17)
-target_include_directories(ods-toy-opt PRIVATE ${LLVM_INCLUDE_DIRS} ${MLIR_INCLUDE_DIRS})
+target_include_directories(ods-toy-opt PRIVATE
+  ${CMAKE_CURRENT_BINARY_DIR}
+  ${LLVM_INCLUDE_DIRS}
+  ${MLIR_INCLUDE_DIRS}
+)
 target_link_libraries(ods-toy-opt PRIVATE
   MLIRMlirOptMain
-  MLIRArithmetic
+  MLIRArithDialect
   MLIRIR
   MLIRParser
   MLIRPass
@@ -77,7 +81,7 @@ target_compile_features(pass-manager-greedy PRIVATE cxx_std_17)
 target_include_directories(pass-manager-greedy PRIVATE ${LLVM_INCLUDE_DIRS} ${MLIR_INCLUDE_DIRS})
 target_link_libraries(pass-manager-greedy PRIVATE
   MLIROptLib
-  MLIRArithmetic
+  MLIRArithDialect
   MLIRIR
   MLIRParser
   MLIRPass
@@ -89,19 +93,23 @@ target_compile_features(lowering-examples PRIVATE cxx_std_17)
 target_include_directories(lowering-examples PRIVATE ${LLVM_INCLUDE_DIRS} ${MLIR_INCLUDE_DIRS})
 target_link_libraries(lowering-examples PRIVATE
   MLIROptLib
-  MLIRAffine
+  MLIRAffineDialect
   MLIRAffineToStandard
-  MLIRArithmetic
-  MLIRStandard
-  MLIRLLVMIR
-  MLIRMemRef
+  MLIRArithDialect
+  MLIRArithToLLVM
+  MLIRControlFlowDialect
+  MLIRControlFlowToLLVM
+  MLIRFuncDialect
+  MLIRFuncToLLVM
+  MLIRLLVMDialect
+  MLIRMemRefDialect
   MLIRMemRefToLLVM
   MLIRReconcileUnrealizedCasts
-  MLIRSCF
-  MLIRSCFToStandard
-  MLIRStandardToLLVM
+  MLIRSCFDialect
+  MLIRSCFToControlFlow
   MLIRIR
   MLIRParser
   MLIRPass
+  MLIRTransformUtils
   MLIRTransforms
 )

@@ -1,4 +1,4 @@
-// A small end-to-end lowering example for MLIR 14.
+// A small end-to-end lowering example for MLIR 16.
 //
 // The input operation has deliberately simple semantics:
 //   toy.saxpy(%a, %x, %y, %out)
@@ -7,25 +7,29 @@
 //
 // It is lowered through either SCF or Affine loops, both using MemRef and
 // Arith operations.  A final pass demonstrates the rest of the route to the
-// LLVM dialect.  "Standard dialect" is the historical name used by MLIR 14
-// for the CFG operations created between SCF and LLVM lowering.
+// LLVM dialect. In MLIR 16 the CFG operations produced between SCF and LLVM
+// lowering belong to the ControlFlow dialect.
 
 #include "mlir/Conversion/AffineToStandard/AffineToStandard.h"
+#include "mlir/Conversion/ArithToLLVM/ArithToLLVM.h"
+#include "mlir/Conversion/ControlFlowToLLVM/ControlFlowToLLVM.h"
+#include "mlir/Conversion/FuncToLLVM/ConvertFuncToLLVM.h"
+#include "mlir/Conversion/LLVMCommon/TypeConverter.h"
 #include "mlir/Conversion/MemRefToLLVM/MemRefToLLVM.h"
 #include "mlir/Conversion/ReconcileUnrealizedCasts/ReconcileUnrealizedCasts.h"
-#include "mlir/Conversion/SCFToStandard/SCFToStandard.h"
-#include "mlir/Conversion/StandardToLLVM/ConvertStandardToLLVMPass.h"
+#include "mlir/Conversion/SCFToControlFlow/SCFToControlFlow.h"
 #include "mlir/Dialect/Affine/IR/AffineOps.h"
-#include "mlir/Dialect/Arithmetic/IR/Arithmetic.h"
+#include "mlir/Dialect/Arith/IR/Arith.h"
+#include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
+#include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
-#include "mlir/Dialect/SCF/SCF.h"
-#include "mlir/Dialect/StandardOps/IR/Ops.h"
+#include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/Dialect.h"
 #include "mlir/IR/PatternMatch.h"
 #include "mlir/Pass/Pass.h"
 #include "mlir/Pass/PassManager.h"
-#include "mlir/Support/MlirOptMain.h"
+#include "mlir/Tools/mlir-opt/MlirOptMain.h"
 #include "mlir/Transforms/DialectConversion.h"
 
 using namespace mlir;
@@ -33,7 +37,7 @@ using namespace mlir;
 namespace toy {
 
 class SaxpyOp : public Op<SaxpyOp, OpTrait::NOperands<4>::Impl,
-                          OpTrait::ZeroResult, OpTrait::ZeroRegion> {
+                          OpTrait::ZeroResults, OpTrait::ZeroRegions> {
 public:
   using Op::Op;
 
@@ -141,12 +145,31 @@ template <typename Pattern>
 static LogicalResult lowerToySaxpy(ModuleOp module, MLIRContext &context) {
   ConversionTarget target(context);
   target.addIllegalDialect<ToyLoweringDialect>();
-  target.addLegalDialect<arith::ArithmeticDialect, StandardOpsDialect,
+  target.addLegalDialect<arith::ArithDialect, cf::ControlFlowDialect,
                          memref::MemRefDialect, scf::SCFDialect,
                          AffineDialect>();
   RewritePatternSet patterns(&context);
   patterns.add<Pattern>(&context);
   return applyPartialConversion(module, target, std::move(patterns));
+}
+
+// MLIR 16 exposes the individual dialect-to-LLVM conversion patterns. Keep
+// this small pass local so the tutorial does not depend on an optional
+// aggregate `convert-to-llvm` library from a particular MLIR package.
+static LogicalResult lowerToLLVM(ModuleOp module, MLIRContext &context) {
+  LLVMTypeConverter converter(&context);
+  RewritePatternSet patterns(&context);
+  arith::populateArithToLLVMConversionPatterns(converter, patterns);
+  populateMemRefToLLVMConversionPatterns(converter, patterns);
+  cf::populateControlFlowToLLVMConversionPatterns(converter, patterns);
+  populateFuncToLLVMConversionPatterns(converter, patterns);
+
+  ConversionTarget target(context);
+  target.addLegalOp<ModuleOp>();
+  target.addLegalDialect<LLVM::LLVMDialect>();
+  target.addIllegalDialect<arith::ArithDialect, memref::MemRefDialect,
+                           cf::ControlFlowDialect, func::FuncDialect>();
+  return applyFullConversion(module, target, std::move(patterns));
 }
 
 struct LowerToySaxpyToSCFPass
@@ -157,7 +180,7 @@ struct LowerToySaxpyToSCFPass
   }
 
   void getDependentDialects(DialectRegistry &registry) const override {
-    registry.insert<arith::ArithmeticDialect, memref::MemRefDialect,
+    registry.insert<arith::ArithDialect, memref::MemRefDialect,
                     scf::SCFDialect>();
   }
 
@@ -177,7 +200,7 @@ struct LowerToySaxpyToAffinePass
   }
 
   void getDependentDialects(DialectRegistry &registry) const override {
-    registry.insert<AffineDialect, arith::ArithmeticDialect,
+    registry.insert<AffineDialect, arith::ArithDialect,
                     memref::MemRefDialect>();
   }
 
@@ -188,47 +211,45 @@ struct LowerToySaxpyToAffinePass
 };
 
 // This pass owns an entire pipeline, so one command exposes every remaining
-// lowering stage: toy -> scf/memref/arith -> std/cf -> llvm.
+// lowering stage: toy -> scf/memref/arith -> cf -> llvm.
 struct LowerToySaxpyToLLVMPass
     : PassWrapper<LowerToySaxpyToLLVMPass, OperationPass<ModuleOp>> {
   StringRef getArgument() const final { return "lower-toy-saxpy-to-llvm"; }
   StringRef getDescription() const final {
-    return "Lower toy.saxpy through SCF and Standard CFG to the LLVM dialect";
+    return "Lower toy.saxpy through SCF and ControlFlow to the LLVM dialect";
   }
 
   void getDependentDialects(DialectRegistry &registry) const override {
-    registry.insert<arith::ArithmeticDialect, memref::MemRefDialect,
-                    scf::SCFDialect, StandardOpsDialect, LLVM::LLVMDialect>();
+    registry.insert<arith::ArithDialect, memref::MemRefDialect,
+                    scf::SCFDialect, cf::ControlFlowDialect,
+                    LLVM::LLVMDialect>();
   }
 
   void runOnOperation() final {
     PassManager pipeline(&getContext());
     pipeline.addPass(std::make_unique<LowerToySaxpyToSCFPass>());
-    // MLIR 14 calls this the Standard dialect. Newer MLIR versions call the
-    // resulting branch operations the cf dialect instead.
-    pipeline.addPass(createLowerToCFGPass());
-    pipeline.addPass(createLowerToLLVMPass());
-    pipeline.addPass(createMemRefToLLVMPass());
-    pipeline.addPass(createReconcileUnrealizedCastsPass());
-    if (failed(pipeline.run(getOperation())))
+    pipeline.addPass(createConvertSCFToCFPass());
+    if (failed(pipeline.run(getOperation())) ||
+        failed(lowerToLLVM(getOperation(), getContext())))
       signalPassFailure();
   }
 };
 
 // The same LLVM destination can start from Affine. This makes the historical
-// Affine -> Standard -> LLVM part of the pipeline directly observable.
+// Affine -> ControlFlow -> LLVM part of the pipeline directly observable.
 struct LowerToySaxpyAffineToLLVMPass
     : PassWrapper<LowerToySaxpyAffineToLLVMPass, OperationPass<ModuleOp>> {
   StringRef getArgument() const final {
     return "lower-toy-saxpy-affine-to-llvm";
   }
   StringRef getDescription() const final {
-    return "Lower toy.saxpy through Affine and Standard CFG to LLVM dialect";
+    return "Lower toy.saxpy through Affine and ControlFlow to LLVM dialect";
   }
 
   void getDependentDialects(DialectRegistry &registry) const override {
-    registry.insert<AffineDialect, arith::ArithmeticDialect,
-                    memref::MemRefDialect, StandardOpsDialect,
+    registry.insert<AffineDialect, arith::ArithDialect,
+                    memref::MemRefDialect, scf::SCFDialect,
+                    cf::ControlFlowDialect,
                     LLVM::LLVMDialect>();
   }
 
@@ -236,11 +257,10 @@ struct LowerToySaxpyAffineToLLVMPass
     PassManager pipeline(&getContext());
     pipeline.addPass(std::make_unique<LowerToySaxpyToAffinePass>());
     pipeline.addPass(createLowerAffinePass());
+    pipeline.addPass(createConvertSCFToCFPass());
     pipeline.addPass(createReconcileUnrealizedCastsPass());
-    pipeline.addPass(createLowerToLLVMPass());
-    pipeline.addPass(createMemRefToLLVMPass());
-    pipeline.addPass(createReconcileUnrealizedCastsPass());
-    if (failed(pipeline.run(getOperation())))
+    if (failed(pipeline.run(getOperation())) ||
+        failed(lowerToLLVM(getOperation(), getContext())))
       signalPassFailure();
   }
 };
@@ -277,8 +297,9 @@ struct LowerToySaxpyAffineToLLVMPass
 int main(int argc, char **argv) {
   DialectRegistry registry;
   registry.insert<toy::ToyLoweringDialect, AffineDialect,
-                  arith::ArithmeticDialect, StandardOpsDialect,
-                  memref::MemRefDialect, scf::SCFDialect, LLVM::LLVMDialect>();
+                  arith::ArithDialect, cf::ControlFlowDialect,
+                  func::FuncDialect, memref::MemRefDialect, scf::SCFDialect,
+                  LLVM::LLVMDialect>();
   PassRegistration<toy::LowerToySaxpyToSCFPass>();
   PassRegistration<toy::LowerToySaxpyToAffinePass>();
   PassRegistration<toy::LowerToySaxpyToLLVMPass>();

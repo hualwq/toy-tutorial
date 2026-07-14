@@ -2,12 +2,12 @@
 //   PassManager: schedules passes over a hierarchy of operations.
 //   GreedyPatternRewrite: repeatedly applies local rewrite rules to an op.
 
-#include "mlir/Dialect/Arithmetic/IR/Arithmetic.h"
+#include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/IR/Matchers.h"
 #include "mlir/IR/PatternMatch.h"
 #include "mlir/Pass/Pass.h"
 #include "mlir/Pass/PassManager.h"
-#include "mlir/Support/MlirOptMain.h"
+#include "mlir/Tools/mlir-opt/MlirOptMain.h"
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
 
 using namespace mlir;
@@ -99,7 +99,7 @@ struct RunToyCleanupPipelinePass
 
 int main(int argc, char **argv) {
   DialectRegistry registry;
-  registry.insert<arith::ArithmeticDialect>();
+  registry.insert<arith::ArithDialect>();
 
   PassRegistration<toy::GreedyAddZeroCleanupPass>();
   PassRegistration<toy::RunToyCleanupPipelinePass>();

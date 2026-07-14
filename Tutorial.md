@@ -418,8 +418,8 @@ pipeline.run(getOperation());
 `builtin.module` 的子 pipeline。因此输入有两个嵌套 module 时，`GreedyAddZeroCleanupPass`
 的 `runOnOperation()` 被调用两次，每次得到一个子 `ModuleOp`。这就是 pass 的 operation
 scope：不同层级的 operation 可以拥有不同 pass。真实编译器通常会把这一层替换为
-`func.func`，但本机 MLIR 14 包缺少 Func dialect 的开发头文件，示例用 builtin module 保持
-代码可直接构建。PassManager 负责顺序、嵌套、失败传播和 IR 验证选项，但它不定义 `x + 0`
+`func.func`；本示例保留 builtin module，以便直接观察嵌套 ModuleOp 的调度行为。
+PassManager 负责顺序、嵌套、失败传播和 IR 验证选项，但它不定义 `x + 0`
 如何优化。
 
 命令行里的 `-run-toy-cleanup-pipeline` 是一个包装 pass；它演示在 C++ 中构建 pipeline。
@@ -603,19 +603,19 @@ mlir-examples/toy-tutorial/build/lowering-examples \
   mlir-examples/toy-tutorial/input/08_lowering_examples.mlir \
   -lower-toy-saxpy-to-affine-memref --verify-each
 
-# Toy -> SCF -> Standard/CFG -> LLVM dialect。
+# Toy -> SCF -> ControlFlow -> LLVM dialect。
 mlir-examples/toy-tutorial/build/lowering-examples \
   mlir-examples/toy-tutorial/input/08_lowering_examples.mlir \
   -lower-toy-saxpy-to-llvm --verify-each
 
-# Toy -> Affine -> Standard -> LLVM dialect。
+# Toy -> Affine -> ControlFlow -> LLVM dialect。
 mlir-examples/toy-tutorial/build/lowering-examples \
   mlir-examples/toy-tutorial/input/08_lowering_examples.mlir \
   -lower-toy-saxpy-affine-to-llvm --verify-each
 ```
 
-在当前的 MLIR 14 环境中，`createLowerToCFGPass()` 与 `createLowerAffinePass()` 产生的
-是旧称 Standard dialect 的控制流操作；现代 MLIR 已将其拆为 `cf`、`func` 等 dialect。
+当前项目使用 MLIR 16：SCF 先经 `createConvertSCFToCFPass()` 转为 `cf`，再由项目中的
+conversion patterns 将 `arith`、`memref`、`cf` 与 `func` 转为 LLVM dialect。
 最终的 LLVM dialect 可见 `llvm.getelementptr`、`llvm.load`、`llvm.fmul`、`llvm.store` 和
 `llvm.br`。它仍是 MLIR，不是文本 LLVM IR；如需导出文本 LLVM IR，还可接 `mlir-translate
 --mlir-to-llvmir`。

@@ -1,10 +1,10 @@
 // All three buffers use a static shape so the Affine lowering has a static
 // loop bound. The operation computes: out[i] = a * x[i] + y[i].
-func @saxpy(%a: f32, %x: memref<8xf32>, %y: memref<8xf32>,
-            %out: memref<8xf32>) {
+func.func @saxpy(%a: f32, %x: memref<8xf32>, %y: memref<8xf32>,
+                 %out: memref<8xf32>) {
   "toy.saxpy"(%a, %x, %y, %out) :
     (f32, memref<8xf32>, memref<8xf32>, memref<8xf32>) -> ()
-  return
+  func.return
 }
 
 

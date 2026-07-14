@@ -22,6 +22,7 @@ class AddOp : public Op<AddOp, OpTrait::NOperands<2>::Impl,
 public:
   using Op::Op;
   static StringRef getOperationName() { return "toy.add"; }
+  static ArrayRef<StringRef> getAttributeNames() { return {}; }
   Value getLhs() { return getOperand(0); }
   Value getRhs() { return getOperand(1); }
 
@@ -38,6 +39,7 @@ class MultiplyOp : public Op<MultiplyOp, OpTrait::NOperands<2>::Impl,
 public:
   using Op::Op;
   static StringRef getOperationName() { return "toy.multiply"; }
+  static ArrayRef<StringRef> getAttributeNames() { return {}; }
   Value getLhs() { return getOperand(0); }
   Value getRhs() { return getOperand(1); }
 

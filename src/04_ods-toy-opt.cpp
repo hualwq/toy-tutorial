@@ -3,10 +3,10 @@
 
 #include "../ods/OdsToyOps.h"
 
-#include "mlir/Dialect/Arithmetic/IR/Arithmetic.h"
+#include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/IR/PatternMatch.h"
 #include "mlir/Pass/Pass.h"
-#include "mlir/Support/MlirOptMain.h"
+#include "mlir/Tools/mlir-opt/MlirOptMain.h"
 #include "mlir/Transforms/DialectConversion.h"
 
 using namespace mlir;
@@ -38,7 +38,7 @@ public:
 
   LogicalResult matchAndRewrite(Toy_AddOp op,
                                 PatternRewriter &rewriter) const override {
-    rewriter.replaceOpWithNewOp<arith::AddFOp>(op, op.lhs(), op.rhs());
+    rewriter.replaceOpWithNewOp<arith::AddFOp>(op, op.getLhs(), op.getRhs());
     return success();
   }
 };
@@ -49,7 +49,7 @@ public:
 
   LogicalResult matchAndRewrite(Toy_MultiplyOp op,
                                 PatternRewriter &rewriter) const override {
-    rewriter.replaceOpWithNewOp<arith::MulFOp>(op, op.lhs(), op.rhs());
+    rewriter.replaceOpWithNewOp<arith::MulFOp>(op, op.getLhs(), op.getRhs());
     return success();
   }
 };
@@ -61,8 +61,8 @@ public:
   LogicalResult matchAndRewrite(Toy_ScaleOp op,
                                 PatternRewriter &rewriter) const override {
     auto factor = rewriter.create<arith::ConstantOp>(
-        op.getLoc(), rewriter.getF32FloatAttr(op.factor().convertToFloat()));
-    rewriter.replaceOpWithNewOp<arith::MulFOp>(op, op.input(), factor);
+        op.getLoc(), rewriter.getF32FloatAttr(op.getFactor().convertToFloat()));
+    rewriter.replaceOpWithNewOp<arith::MulFOp>(op, op.getInput(), factor);
     return success();
   }
 };
@@ -97,7 +97,7 @@ struct LowerOdsToyToArithPass
   void runOnOperation() final {
     ConversionTarget target(getContext());
     target.addIllegalDialect<OdsToyDialect>();
-    target.addLegalDialect<arith::ArithmeticDialect>();
+    target.addLegalDialect<arith::ArithDialect>();
 
     RewritePatternSet patterns(&getContext());
     patterns.add<LowerAdd, LowerMultiply, LowerScale>(&getContext());
@@ -111,7 +111,7 @@ struct LowerOdsToyToArithPass
 
 int main(int argc, char **argv) {
   DialectRegistry registry;
-  registry.insert<ods_toy::OdsToyDialect, arith::ArithmeticDialect>();
+  registry.insert<ods_toy::OdsToyDialect, arith::ArithDialect>();
   PassRegistration<ods_toy::LowerOdsToyToArithPass>();
   PassRegistration<ods_toy::AnnotateOdsToyCostsPass>();
   return asMainReturnCode(

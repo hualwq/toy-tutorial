@@ -22,8 +22,8 @@ def ODS_ToyDialect : Dialect {
 class ODS_ToyOp<string mnemonic, list<Trait> traits = []> :
     Op<ODS_ToyDialect, mnemonic, traits>;
 
-// 创建一个类实例，Op名称为 add，SameOperandsAndResultType 表示operand 和 result 类型相同，NoSideEffect 表示没有副作用
-def ODS_Toy_AddOp : ODS_ToyOp<"add", [NoSideEffect, SameOperandsAndResultType,
+// 创建一个类实例，Op名称为 add，SameOperandsAndResultType 表示operand 和 result 类型相同，Pure 表示没有副作用
+def ODS_Toy_AddOp : ODS_ToyOp<"add", [Pure, SameOperandsAndResultType,
     DeclareOpInterfaceMethods<ODS_ToyCostOpInterface>]> {
   let summary = "Add two f32 scalar values";
   // ins 表示输入参数，outs 表示输出参数
@@ -33,7 +33,7 @@ def ODS_Toy_AddOp : ODS_ToyOp<"add", [NoSideEffect, SameOperandsAndResultType,
   let assemblyFormat = "$lhs `,` $rhs attr-dict `:` type($result)";
 }
 
-def ODS_Toy_MultiplyOp : ODS_ToyOp<"multiply", [NoSideEffect,
+def ODS_Toy_MultiplyOp : ODS_ToyOp<"multiply", [Pure,
     SameOperandsAndResultType,
     DeclareOpInterfaceMethods<ODS_ToyCostOpInterface>]> {
   let summary = "Multiply two f32 scalar values";
@@ -42,7 +42,7 @@ def ODS_Toy_MultiplyOp : ODS_ToyOp<"multiply", [NoSideEffect,
   let assemblyFormat = "$lhs `,` $rhs attr-dict `:` type($result)";
 }
 
-def ODS_Toy_ScaleOp : ODS_ToyOp<"scale", [NoSideEffect,
+def ODS_Toy_ScaleOp : ODS_ToyOp<"scale", [Pure,
                                             SameOperandsAndResultType]> {
   let summary = "Scale an f32 value by a factor";
   // 设置 factor 的默认值为 1.0f
